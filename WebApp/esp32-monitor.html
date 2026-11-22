@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor ESP32</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap">
+<style>
+:root{
+  --bg:#e8eef0; --panel:#f8fbfc; --ink:#12202b; --muted:#5a6b76; --line:#cbd6db;
+  --temp:#d6336c; --hum:#0b7a8f; --ok:#2f9e5b; --err:#c92a2a; --demo:#b7791f;
+  --font:"Bricolage Grotesque","Avenir Next","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1920; --panel:#15242d; --ink:#e7eff3; --muted:#8fa3ae;
+    --line:#263a45; --temp:#ff6b9a; --hum:#4cc9e0; --ok:#5ad18a; --err:#ff7b7b; --demo:#e8b34f;
+  }
+}
+*{box-sizing:border-box;margin:0}
+html{color-scheme:light dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);min-height:100vh;
+  display:flex;flex-direction:column;padding:clamp(16px,4vw,48px);gap:clamp(20px,4vw,40px)}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+h1{font-size:clamp(1.3rem,3vw,1.8rem);font-weight:800;letter-spacing:-.02em}
+.sub{color:var(--muted);font-size:.9rem;margin-top:2px}
+.conn{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);
+  border-radius:999px;padding:8px 8px 8px 16px;font-size:.9rem}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+.ok .dot{background:var(--ok);animation:pulse 2s infinite}
+.err .dot{background:var(--err)} .demo .dot{background:var(--demo)}
+@keyframes pulse{50%{opacity:.35}}
+button{font:inherit;cursor:pointer;border:0;border-radius:999px;padding:6px 14px;
+  background:var(--ink);color:var(--bg);font-weight:600}
+button:focus-visible,input:focus-visible{outline:3px solid var(--hum);outline-offset:2px}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:clamp(16px,3vw,28px);flex:1;align-content:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:28px;padding:clamp(20px,3vw,34px);
+  display:flex;flex-direction:column;gap:22px;transition:opacity .3s}
+.panel.stale{opacity:.55}
+.panel h2{font-size:1.05rem;font-weight:600;color:var(--c)}
+.value{display:flex;align-items:baseline;gap:6px;line-height:.9}
+.num{font-size:clamp(4.5rem,13vw,7.5rem);font-weight:800;letter-spacing:-.05em;font-variant-numeric:tabular-nums}
+.unit{font-size:clamp(1.6rem,4vw,2.4rem);font-weight:400;color:var(--muted)}
+.track{position:relative;height:10px;border-radius:99px;background:color-mix(in srgb,var(--c) 18%,transparent)}
+.track i{position:absolute;top:50%;width:22px;height:22px;border-radius:50%;background:var(--c);
+  border:4px solid var(--panel);transform:translate(-50%,-50%);left:0;transition:left .6s cubic-bezier(.2,.8,.2,1);
+  box-shadow:0 0 0 1px var(--c)}
+.scale{display:flex;justify-content:space-between;color:var(--muted);font-size:.8rem;margin-top:8px}
+.spark{width:100%;height:64px;display:block}
+.spark path.line{fill:none;stroke:var(--c);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.spark path.area{fill:var(--c);opacity:.12}
+dl{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;border-top:1px solid var(--line);padding-top:16px}
+dt{color:var(--muted);font-size:.8rem} dd{font-size:1.15rem;font-weight:600;font-variant-numeric:tabular-nums}
+footer{color:var(--muted);font-size:.85rem}
+dialog{margin:auto;border:1px solid var(--line);border-radius:24px;padding:28px;background:var(--panel);color:var(--ink);
+  width:min(92vw,420px);font-family:var(--font)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+form{display:flex;flex-direction:column;gap:16px}
+label{display:flex;flex-direction:column;gap:6px;font-size:.9rem;font-weight:600}
+label.chk{flex-direction:row;align-items:center;gap:10px;font-weight:400}
+input[type=text],input[type=number]{font:inherit;padding:10px 12px;border-radius:12px;border:1px solid var(--line);
+  background:var(--bg);color:var(--ink)}
+small{color:var(--muted);font-weight:400}
+.row{display:flex;gap:10px;justify-content:flex-end}
+.row .ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Monitor ESP32</h1>
+    <p class="sub" id="where">Sin configurar</p>
+  </div>
+  <div class="conn demo" id="conn">
+    <span class="dot"></span><span id="status">Modo demo</span>
+    <button id="open" type="button">Conexión</button>
+  </div>
+</header>
+
+<main id="panels"></main>
+<footer id="stamp">Esperando datos…</footer>
+
+<dialog id="dlg">
+  <form method="dialog" id="form">
+    <label>Dirección del ESP32
+      <input type="text" id="url" placeholder="http://192.168.1.50/data" autocomplete="off">
+      <small>Debe responder JSON: {"temperature": 23.4, "humidity": 56}</small>
+    </label>
+    <label>Consultar cada (segundos)
+      <input type="number" id="every" min="1" max="3600" step="1">
+    </label>
+    <label class="chk"><input type="checkbox" id="demo"> Usar datos de demostración</label>
+    <div class="row">
+      <button type="button" class="ghost" id="cancel">Cancelar</button>
+      <button type="submit">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// ── Sensores: editá etiquetas, claves JSON y rangos acá ──────────────
+const SENSORS = [
+  {id:'t', label:'Temperatura', unit:'°C', keys:['temperature','temperatura','temp','t'], min:-10, max:50,  dec:1, color:'var(--temp)'},
+  {id:'h', label:'Humedad',     unit:'%',  keys:['humidity','humedad','hum','h'],        min:0,   max:100, dec:0, color:'var(--hum)'}
+];
+const MAX_POINTS = 90, TIMEOUT_MS = 4000;
+
+const $ = s => document.querySelector(s);
+let cfg = {url:'', every:2, demo:true};
+try { Object.assign(cfg, JSON.parse(localStorage.getItem('esp32cfg')||'{}')); } catch(e){}
+const hist = Object.fromEntries(SENSORS.map(s=>[s.id,[]]));
+let timer;
+
+// ── Construcción de paneles ──────────────────────────────────────────
+$('#panels').innerHTML = SENSORS.map(s=>`
+  <article class="panel stale" id="p-${s.id}" style="--c:${s.color}">
+    <h2>${s.label}</h2>
+    <div class="value"><span class="num">--</span><span class="unit">${s.unit}</span></div>
+    <div>
+      <div class="track"><i></i></div>
+      <div class="scale"><span>${s.min}${s.unit}</span><span>${s.max}${s.unit}</span></div>
+    </div>
+    <svg class="spark" viewBox="0 0 200 64" preserveAspectRatio="none" aria-hidden="true">
+      <path class="area"/><path class="line"/>
+    </svg>
+    <dl>
+      <div><dt>Mínima</dt><dd data-k="min">--</dd></div>
+      <div><dt>Promedio</dt><dd data-k="avg">--</dd></div>
+      <div><dt>Máxima</dt><dd data-k="max">--</dd></div>
+    </dl>
+  </article>`).join('');
+
+const fmt = (v,d) => v.toLocaleString('es-AR',{minimumFractionDigits:d,maximumFractionDigits:d});
+
+function render(s, v){
+  const h = hist[s.id]; h.push(v); if(h.length>MAX_POINTS) h.shift();
+  const p = $('#p-'+s.id); p.classList.remove('stale');
+  p.querySelector('.num').textContent = fmt(v,s.dec);
+  const pct = Math.min(100,Math.max(0,(v-s.min)/(s.max-s.min)*100));
+  p.querySelector('.track i').style.left = pct+'%';
+  const lo=Math.min(...h), hi=Math.max(...h), avg=h.reduce((a,b)=>a+b,0)/h.length;
+  p.querySelector('[data-k=min]').textContent = fmt(lo,s.dec);
+  p.querySelector('[data-k=avg]').textContent = fmt(avg,s.dec);
+  p.querySelector('[data-k=max]').textContent = fmt(hi,s.dec);
+  // sparkline
+  const span = (hi-lo)||1, n=Math.max(h.length-1,1);
+  const pts = h.map((y,i)=>[i/n*200, 58-((y-lo)/span)*52]);
+  const d = pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join('');
+  p.querySelector('.line').setAttribute('d', d);
+  p.querySelector('.area').setAttribute('d', pts.length>1 ? d+`L200 64L0 64Z` : '');
+}
+
+function pick(obj, keys){
+  for(const k of keys){ if(k in obj && isFinite(parseFloat(obj[k]))) return parseFloat(obj[k]); }
+  return null;
+}
+
+function setStatus(kind, text){
+  $('#conn').className = 'conn '+kind;
+  $('#status').textContent = text;
+}
+
+// ── Obtención de datos ───────────────────────────────────────────────
+async function getData(){
+  if(cfg.demo || !cfg.url){
+    const t = Date.now();
+    return {temperature: 24 + 4*Math.sin(t/25000) + Math.random()*.4,
+            humidity: 55 + 12*Math.cos(t/32000) + Math.random()*.8};
+  }
+  const ctl = new AbortController(), to = setTimeout(()=>ctl.abort(), TIMEOUT_MS);
+  try{
+    const r = await fetch(cfg.url, {signal:ctl.signal, cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  } finally { clearTimeout(to); }
+}
+
+async function tick(){
+  clearTimeout(timer);
+  try{
+    const data = await getData();
+    let got = 0;
+    SENSORS.forEach(s=>{ const v = pick(data,s.keys); if(v!==null){ render(s,v); got++; } });
+    if(!got) throw new Error('JSON sin los campos esperados');
+    const live = !(cfg.demo || !cfg.url);
+    setStatus(live?'ok':'demo', live?'Datos en vivo':'Modo demo');
+    $('#stamp').textContent = 'Actualizado '+new Date().toLocaleTimeString('es-AR');
+  }catch(e){
+    document.querySelectorAll('.panel').forEach(p=>p.classList.add('stale'));
+    setStatus('err','Sin respuesta del ESP32');
+    $('#stamp').textContent = 'No se pudo leer '+cfg.url+'. Revisá la IP, que estés en la misma red y que el ESP32 envíe el encabezado CORS.';
+  }
+  timer = setTimeout(tick, Math.max(1,cfg.every)*1000);
+}
+
+// ── Configuración ────────────────────────────────────────────────────
+function refreshWhere(){
+  $('#where').textContent = (cfg.demo||!cfg.url) ? 'Datos de demostración' : cfg.url;
+}
+$('#open').onclick = ()=>{
+  $('#url').value = cfg.url; $('#every').value = cfg.every; $('#demo').checked = cfg.demo || !cfg.url;
+  $('#dlg').showModal();
+};
+$('#cancel').onclick = ()=>$('#dlg').close();
+$('#form').onsubmit = ()=>{
+  cfg = {url:$('#url').value.trim(), every:Math.max(1,+$('#every').value||2), demo:$('#demo').checked};
+  try{ localStorage.setItem('esp32cfg', JSON.stringify(cfg)); }catch(e){}
+  SENSORS.forEach(s=>hist[s.id].length=0);
+  refreshWhere(); tick();
+};
+
+refreshWhere(); tick();
+</script>
+</body>
+</html>
